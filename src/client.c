@@ -50,7 +50,7 @@ static coap_response_t hnd_response(coap_session_t *session,
         cf = coap_decode_var_bytes(coap_opt_value(cf_opt), coap_opt_length(cf_opt));
     }
 
-    if (code == COAP_RESPONSE_CODE(503) && cf == 120) {
+    if (code == COAP_RESPONSE_CODE(503) && (cf == 12 || cf == 120)) {
         printf("Detected CBOR Informative Response (ObservationInfo).\n");
         if (decode_observation_info(data, len, &mcast_tp) == 0) {
             printf("Decoded tp_info successfully:\n");
