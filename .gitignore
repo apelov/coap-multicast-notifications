@@ -1,0 +1,11 @@
+# Agent scratch files
+.ai/scratch/
+
+# Compiled binaries
+coap_server
+coap_client
+
+# Object files
+src/*.o
+
+
