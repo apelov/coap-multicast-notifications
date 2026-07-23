@@ -15,6 +15,10 @@ Completed.
 - Clean, readable `README.md` with instructions and Wireshark details.
 - Added orchestrator script `run_demo.sh` to compile, launch a server, and run a configurable number of clients in parallel.
 - Added interoperability orchestrator script `interop_demo.sh` to manage mixed Java and C clients/servers.
+- Fixed `coap_address_t` size structure initialization in C codebase (resolving socket bind/connect failures on macOS).
+- Enabled line-buffered output on C client/server `stdout` to ensure instant redirection logging.
+- Added packet capturing demo script `run_pcap_demo.sh` that captures the exchange in `demo.pcap` and prints a summary.
+
 
 
 
