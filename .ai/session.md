@@ -14,6 +14,8 @@ Completed.
 - Warning-free compilation setup via `Makefile` linking `libcoap` and `libcbor`.
 - Clean, readable `README.md` with instructions and Wireshark details.
 - Added orchestrator script `run_demo.sh` to compile, launch a server, and run a configurable number of clients in parallel.
+- Added interoperability orchestrator script `interop_demo.sh` to manage mixed Java and C clients/servers.
+
 
 
 
