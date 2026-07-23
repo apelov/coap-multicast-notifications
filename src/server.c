@@ -166,13 +166,13 @@ static void send_multicast_notification(coap_context_t *ctx) {
         fprintf(stderr, "Failed to send multicast notification\n");
     }
 }
-
 int main(int argc, char *argv[]) {
+    const char *resource_path = "obs";
     int port = DEFAULT_PORT;
     int use_oscore = 0;
     int opt;
 
-    while ((opt = getopt(argc, argv, "sp:m:g:")) != -1) {
+    while ((opt = getopt(argc, argv, "sp:m:g:r:")) != -1) {
         switch (opt) {
             case 's':
                 use_oscore = 1;
@@ -186,8 +186,11 @@ int main(int argc, char *argv[]) {
             case 'g':
                 mcast_port = atoi(optarg);
                 break;
+            case 'r':
+                resource_path = optarg;
+                break;
             default:
-                fprintf(stderr, "Usage: %s [-s] [-p port] [-m mcast_ip] [-g mcast_port]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-s] [-p port] [-m mcast_ip] [-g mcast_port] [-r resource_path]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -226,13 +229,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Initialize resource /obs
-    coap_resource_t *r = coap_resource_init(coap_make_str_const("obs"), 0);
+    // Initialize resource with configured path
+    coap_resource_t *r = coap_resource_init(coap_make_str_const(resource_path), 0);
     coap_register_request_handler(r, COAP_REQUEST_GET, hnd_get_obs);
     coap_resource_set_get_observable(r, 1);
     coap_add_resource(ctx, r);
 
-    printf("CoAP Multicast Observe Server started. Listening on port %d...\n", port);
+    printf("CoAP Multicast Observe Server started with resource /%s. Listening on port %d...\n", resource_path, port);
 
     coap_tick_t last_notify_time = 0;
     coap_ticks(&last_notify_time);

