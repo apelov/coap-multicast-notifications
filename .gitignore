@@ -8,4 +8,8 @@ coap_client
 # Object files
 src/*.o
 
+# PCAP files
+*.pcap
+
+
 

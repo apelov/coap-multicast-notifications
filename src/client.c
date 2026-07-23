@@ -99,6 +99,7 @@ static coap_response_t hnd_response(coap_session_t *session,
 }
 
 int main(int argc, char *argv[]) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     const char *host = DEFAULT_HOST;
     int port = DEFAULT_PORT;
     const char *resource_path = "obs";
@@ -128,6 +129,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, handle_sigint);
 
     coap_startup();
+    coap_set_log_level(COAP_LOG_DEBUG);
 
     // Create CoAP context
     coap_context_t *ctx = coap_new_context(NULL);
@@ -142,6 +144,7 @@ int main(int argc, char *argv[]) {
     // Resolve server address
     coap_address_t srv_addr;
     coap_address_init(&srv_addr);
+    srv_addr.size = sizeof(srv_addr.addr.sin);
     srv_addr.addr.sin.sin_family = AF_INET;
     srv_addr.addr.sin.sin_port = htons(port);
     if (inet_pton(AF_INET, host, &srv_addr.addr.sin.sin_addr) != 1) {
@@ -214,6 +217,7 @@ int main(int argc, char *argv[]) {
             // 1. Create a local endpoint bound to the multicast port
             coap_address_t mcast_bind_addr;
             coap_address_init(&mcast_bind_addr);
+            mcast_bind_addr.size = sizeof(mcast_bind_addr.addr.sin);
             mcast_bind_addr.addr.sin.sin_family = AF_INET;
             mcast_bind_addr.addr.sin.sin_port = htons(mcast_tp.client_port);
             mcast_bind_addr.addr.sin.sin_addr.s_addr = INADDR_ANY;
@@ -236,6 +240,7 @@ int main(int argc, char *argv[]) {
             // 3. Open a multicast session to mapping target
             coap_address_t mcast_dest;
             coap_address_init(&mcast_dest);
+            mcast_dest.size = sizeof(mcast_dest.addr.sin);
             mcast_dest.addr.sin.sin_family = AF_INET;
             mcast_dest.addr.sin.sin_port = htons(mcast_tp.client_port);
             inet_pton(AF_INET, mcast_tp.client_host, &mcast_dest.addr.sin.sin_addr);

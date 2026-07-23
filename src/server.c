@@ -117,6 +117,7 @@ static void send_multicast_notification(coap_context_t *ctx) {
     if (!mcast_session) {
         coap_address_t dst_addr;
         coap_address_init(&dst_addr);
+        dst_addr.size = sizeof(dst_addr.addr.sin);
         dst_addr.addr.sin.sin_family = AF_INET;
         dst_addr.addr.sin.sin_port = htons(mcast_port);
         if (inet_pton(AF_INET, mcast_ip, &dst_addr.addr.sin.sin_addr) != 1) {
@@ -167,6 +168,7 @@ static void send_multicast_notification(coap_context_t *ctx) {
     }
 }
 int main(int argc, char *argv[]) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     const char *resource_path = "obs";
     int port = DEFAULT_PORT;
     int use_oscore = 0;
@@ -198,6 +200,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, handle_sigint);
 
     coap_startup();
+    coap_set_log_level(COAP_LOG_DEBUG);
 
     // Create context
     coap_context_t *ctx = coap_new_context(NULL);
@@ -209,6 +212,7 @@ int main(int argc, char *argv[]) {
     // Set server endpoint (unicast)
     coap_address_t bind_addr;
     coap_address_init(&bind_addr);
+    bind_addr.size = sizeof(bind_addr.addr.sin);
     bind_addr.addr.sin.sin_family = AF_INET;
     bind_addr.addr.sin.sin_port = htons(port);
     bind_addr.addr.sin.sin_addr.s_addr = INADDR_ANY;
