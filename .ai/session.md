@@ -13,5 +13,7 @@ Completed.
 - CoAP Multicast Observe client (`src/client.c`) that registers, parses `tp_info`, joins the multicast group, and receives notifications.
 - Warning-free compilation setup via `Makefile` linking `libcoap` and `libcbor`.
 - Clean, readable `README.md` with instructions and Wireshark details.
+- Added orchestrator script `run_demo.sh` to compile, launch a server, and run a configurable number of clients in parallel.
+
 
 
