@@ -103,10 +103,11 @@ int main(int argc, char *argv[]) {
     const char *host = DEFAULT_HOST;
     int port = DEFAULT_PORT;
     const char *resource_path = "obs";
+    const char *bind_ip = "0.0.0.0";
     int use_oscore = 0;
     int opt;
 
-    while ((opt = getopt(argc, argv, "sh:p:r:")) != -1) {
+    while ((opt = getopt(argc, argv, "sh:p:r:b:")) != -1) {
         switch (opt) {
             case 's':
                 use_oscore = 1;
@@ -120,8 +121,11 @@ int main(int argc, char *argv[]) {
             case 'r':
                 resource_path = optarg;
                 break;
+            case 'b':
+                bind_ip = optarg;
+                break;
             default:
-                fprintf(stderr, "Usage: %s [-s] [-h host] [-p port] [-r resource_path]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-s] [-h host] [-p port] [-r resource_path] [-b bind_ip]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -220,7 +224,10 @@ int main(int argc, char *argv[]) {
             mcast_bind_addr.size = sizeof(mcast_bind_addr.addr.sin);
             mcast_bind_addr.addr.sin.sin_family = AF_INET;
             mcast_bind_addr.addr.sin.sin_port = htons(mcast_tp.client_port);
-            mcast_bind_addr.addr.sin.sin_addr.s_addr = INADDR_ANY;
+            if (inet_pton(AF_INET, bind_ip, &mcast_bind_addr.addr.sin.sin_addr) != 1) {
+                fprintf(stderr, "Invalid bind IP address: %s\n", bind_ip);
+                mcast_bind_addr.addr.sin.sin_addr.s_addr = INADDR_ANY;
+            }
 
             coap_endpoint_t *mcast_ep = coap_new_endpoint(ctx, &mcast_bind_addr, COAP_PROTO_UDP);
             if (!mcast_ep) {
