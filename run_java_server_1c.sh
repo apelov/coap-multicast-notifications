@@ -8,13 +8,29 @@ echo "=================================================="
 echo "    Java Server + 1 C Client (Clean Interop Run)"
 echo "=================================================="
 
-# Discover physical interface IP
-PHYS_IP=$(ipconfig getifaddr en0)
+# Detect OS and interfaces
+OS_NAME=$(uname -s)
+if [ "$OS_NAME" = "Darwin" ]; then
+    LOOPBACK_INTF="lo0"
+    PHYS_INTF="en0"
+    PHYS_IP=$(ipconfig getifaddr en0)
+else
+    LOOPBACK_INTF="lo"
+    PHYS_INTF=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$PHYS_INTF" ]; then
+        PHYS_INTF="eth0"
+    fi
+    PHYS_IP=$(ip -4 addr show dev "$PHYS_INTF" 2>/dev/null | grep inet | awk '{print $2}' | cut -d/ -f1 | head -n1)
+fi
+
 if [ -z "$PHYS_IP" ]; then
-    echo "Warning: en0 IP not found. Falling back to 127.0.0.1"
+    echo "Warning: Physical IP not found. Falling back to 127.0.0.1"
     PHYS_IP="127.0.0.1"
 fi
-echo "Using physical interface IP: $PHYS_IP"
+
+echo "OS: $OS_NAME"
+echo "Loopback interface: $LOOPBACK_INTF"
+echo "Physical interface: $PHYS_INTF ($PHYS_IP)"
 
 # 1. Clean Port Contention
 echo "Checking and clearing ports 5683 and 56830..."
@@ -27,7 +43,7 @@ fi
 
 # Remove existing PCAP and temp logs
 rm -f "$PCAP_FILE"
-rm -f "$C_DIR/lo0_jh.pcap" "$C_DIR/en0_jh.pcap"
+rm -f "$C_DIR/lo_jh.pcap" "$C_DIR/phys_jh.pcap"
 rm -f /tmp/c_client_clean.log
 
 PIDS=()
@@ -52,14 +68,20 @@ cleanup() {
 
     # Merge captured pcaps if they exist
     cd "$C_DIR"
-    if [ -f lo0_jh.pcap ] && [ -f en0_jh.pcap ]; then
-        echo "Merging lo0 and en0 packet captures into $PCAP_FILE..."
-        /Applications/Wireshark.app/Contents/MacOS/mergecap -w "$PCAP_FILE" lo0_jh.pcap en0_jh.pcap 2>/dev/null
-        rm -f lo0_jh.pcap en0_jh.pcap
-    elif [ -f lo0_jh.pcap ]; then
-        mv lo0_jh.pcap "$PCAP_FILE"
-    elif [ -f en0_jh.pcap ]; then
-        mv en0_jh.pcap "$PCAP_FILE"
+    if [ -f lo_jh.pcap ] && [ -f phys_jh.pcap ]; then
+        echo "Merging loopback and physical packet captures..."
+        MERGECAP_BIN="mergecap"
+        if [ ! -x "$(command -v mergecap)" ]; then
+            if [ -f "/Applications/Wireshark.app/Contents/MacOS/mergecap" ]; then
+                MERGECAP_BIN="/Applications/Wireshark.app/Contents/MacOS/mergecap"
+            fi
+        fi
+        "$MERGECAP_BIN" -w "$PCAP_FILE" lo_jh.pcap phys_jh.pcap 2>/dev/null
+        rm -f lo_jh.pcap phys_jh.pcap
+    elif [ -f lo_jh.pcap ]; then
+        mv lo_jh.pcap "$PCAP_FILE"
+    elif [ -f phys_jh.pcap ]; then
+        mv phys_jh.pcap "$PCAP_FILE"
     fi
 
     # Print diagnostics for C Client
@@ -92,13 +114,13 @@ if [ ! -f "coap_client" ]; then
     make || exit 1
 fi
 
-# 3. Start Packet Capture on lo0 and en0
-echo "Starting packet captures on lo0 and en0..."
-tcpdump -i lo0 -w "$C_DIR/lo0_jh.pcap" -U "udp port 5683 or udp port 56830" 2>/dev/null &
+# 3. Start Packet Capture on loopback and physical interfaces
+echo "Starting packet captures..."
+tcpdump -i "$LOOPBACK_INTF" -w "$C_DIR/lo_jh.pcap" -U "udp port 5683 or udp port 56830" 2>/dev/null &
 LO_PID=$!
 TCPDUMP_PIDS+=($LO_PID)
 
-tcpdump -i en0 -w "$C_DIR/en0_jh.pcap" -U "udp port 5683 or udp port 56830" 2>/dev/null &
+tcpdump -i "$PHYS_INTF" -w "$C_DIR/phys_jh.pcap" -U "udp port 5683 or udp port 56830" 2>/dev/null &
 EN_PID=$!
 TCPDUMP_PIDS+=($EN_PID)
 

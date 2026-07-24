@@ -1,5 +1,9 @@
 # CoAP Multicast Observe: Interoperable C Implementation
 
+> [!NOTE]
+> This codebase was developed with Gemini, during a session with Alexander Pelov, Marco Tiloca, and Rikard Hoglund.
+> This is a first version, which provides a first level of interoperability without security.
+
 This repository contains a fully documented, runnable, and maintainable C implementation of the CoAP Multicast Observe mechanism based on the IETF draft `draft-ietf-core-observe-multicast-notifications`.
 
 It is designed to interoperate with the Java reference implementation from the `adriankastrati/californium-thesis-work` repository (`multicast-notifications` branch) by matching its CBOR encoding, CoAP option formats, and protocol state machine.
