@@ -66,14 +66,37 @@ To run 3 C Clients concurrently against the Java Server:
 - **macOS**: Requires registering the loopback IP aliases first (`sudo ifconfig lo0 alias 127.0.0.2 && sudo ifconfig lo0 alias 127.0.0.3`).
 - **Multicast Routing**: The C clients automatically detect loopback binding and join the multicast group on the loopback interface (`lo` on Linux, `lo0` on macOS).
 
+### 3. C Server Interop Run (Mixed Clients)
+To test the C Server (`coap_server`) with **1 C Client** and **1 Java Client** concurrently, run:
+```bash
+./run_c_server_interop.sh
+```
+- This runs the C Server.
+- Registers 1 C Client (bound to `127.0.0.2`) and 1 Java Client (via `AClient`) to it.
+- Generates `c_server_interop.pcap` showing both unicast handshakes (using Content-Format `12`) and subsequent multicast notifications.
+
+---
+
+## Java Client Patch File
+
+During interop testing, we identified a bug in the Java Client's multicast observe setup (`MulticastObserveClient.java`):
+- The draft specifies that `ph_req` is serialized in a transport-independent CoAP format (starting directly with the Code byte, e.g. `0x01` for `GET`).
+- The Java client erroneously parsed this using `UdpDataParser.parseMessage()`, which expects a standard 4-byte UDP CoAP header and crashes with `MessageFormatException: UDP Message has invalid version: 0` if the header is missing.
+- We also resolved an issue where `NetworkInterfacesUtil` returned `null` for public IPv4 addresses.
+
+We have included a git patch file **`java_client_ph_req_parser.patch`** in the package root. You can apply it directly to your Californium workspace to make the Java client fully draft-compliant:
+```bash
+cd /path/to/californium-thesis-work
+git apply /path/to/java_client_ph_req_parser.patch
+```
+
 ---
 
 ## PCAP Evidences
 
-- **`java_server_1c.pcap`**: A clean 16-packet trace demonstrating the complete, conflict-free interop handshake:
-  - Packets 1-4: Client (`31.133.135.154`) unicast registration (`GET /mult`) and Java Server's `5.03` response containing the full CBOR map.
-  - Packets 5-16: Periodic multicast notifications (`NON 2.05 Content`) broadcast to group `224.0.1.187:56830`.
-- **`java_server_3c.pcap`**: An interop trace showing 3 concurrent C clients successfully registering and receiving notifications over loopback.
+- **`java_server_1c.pcap`**: Unicast registration and multicast notification flow between Java Server and 1 C Client.
+- **`java_server_3c.pcap`**: Unicast registration and multicast notifications between Java Server and 3 C Clients on loopback.
+- **`c_server_interop.pcap`**: Unicast registrations and multicast notifications between C Server, 1 C Client, and 1 Java Client.
 
 You can inspect these directly in Wireshark.
 
@@ -97,3 +120,4 @@ Serialized as a `bstr` representing the client's unicast registration GET reques
 
 ### 3. `last_notif` (Key 2)
 Serialized as a `bstr` representing the initial multicast notification in transport-independent CoAP format (`[Code (0x45)] [Observe Option (0x61 0x01)] [Content-Format Option (0x60)] [0xFF payload marker] [Payload]`).
+

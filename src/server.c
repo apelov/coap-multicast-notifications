@@ -82,14 +82,11 @@ static void hnd_get_obs(coap_resource_t *resource,
             memcpy(tp.token, group_token, group_token_len);
             tp.token_len = group_token_len;
 
-            // 1. Construct ph_req as a full UDP CoAP message to satisfy Java client parser:
-            // [Ver/T/TKL = 0x40] [Code = 0x01] [MID = 0x00 0x00] [Options...]
+            // 1. Construct ph_req as a transport-independent CoAP message (Section 4.2.2):
+            // [Code = 0x01 (GET)] [Options...]
             uint8_t ph_req[128];
             size_t ph_req_len = 0;
-            ph_req[ph_req_len++] = 0x40; // Ver=1, Type=CON, TKL=0
             ph_req[ph_req_len++] = 0x01; // Code: GET
-            ph_req[ph_req_len++] = 0x00; // MID high
-            ph_req[ph_req_len++] = 0x00; // MID low
             ph_req[ph_req_len++] = 0x60; // Option: Observe (delta=6, len=0)
 
             coap_str_const_t *uri_path = coap_resource_get_uri_path(resource);
@@ -127,9 +124,9 @@ static void hnd_get_obs(coap_resource_t *resource,
                 // Return 5.03 Service Unavailable (RFC Section 4.2)
                 coap_pdu_set_code(response, COAP_RESPONSE_CODE(503));
                 
-                // Add Content-Format option: 120 (application/informative-response+cbor)
+                // Add Content-Format option: 12 (application/informative-response+cbor)
                 uint8_t cf_buf[4];
-                size_t cf_len = coap_encode_var_safe(cf_buf, sizeof(cf_buf), 120);
+                size_t cf_len = coap_encode_var_safe(cf_buf, sizeof(cf_buf), 12);
                 coap_add_option(response, COAP_OPTION_CONTENT_FORMAT, cf_len, cf_buf);
 
                 // Add CBOR payload
