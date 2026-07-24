@@ -5,7 +5,7 @@ JAVA_DIR="/tmp/californium-thesis-work"
 PCAP_FILE="$C_DIR/java_server_3c.pcap"
 
 echo "=================================================="
-echo "    Java Server + 3 C Clients (with Socket Hook)"
+echo "    Java Server + 3 C Clients (using Loopback IPs)"
 echo "=================================================="
 
 # 1. Clean Port Contention
@@ -20,7 +20,7 @@ fi
 # Remove existing PCAP and temp logs
 rm -f "$PCAP_FILE"
 rm -f "$C_DIR/lo0_jh.pcap" "$C_DIR/en0_jh.pcap"
-rm -f /tmp/c_client_hook_*.log
+rm -f /tmp/c_client_alias_*.log
 
 PIDS=()
 TCPDUMP_PIDS=()
@@ -56,14 +56,14 @@ cleanup() {
 
     # Print diagnostics for C Clients
     echo "--------------------------------------------------"
-    echo "C Client 1 logs:"
-    tail -n 5 /tmp/c_client_hook_1.log 2>/dev/null
+    echo "C Client 1 logs (bound to 127.0.0.1):"
+    tail -n 5 /tmp/c_client_alias_1.log 2>/dev/null
     echo "--------------------------------------------------"
-    echo "C Client 2 logs:"
-    tail -n 5 /tmp/c_client_hook_2.log 2>/dev/null
+    echo "C Client 2 logs (bound to 127.0.0.2):"
+    tail -n 5 /tmp/c_client_alias_2.log 2>/dev/null
     echo "--------------------------------------------------"
-    echo "C Client 3 logs:"
-    tail -n 5 /tmp/c_client_hook_3.log 2>/dev/null
+    echo "C Client 3 logs (bound to 127.0.0.3):"
+    tail -n 5 /tmp/c_client_alias_3.log 2>/dev/null
     echo "--------------------------------------------------"
 
     if [ -f "$PCAP_FILE" ]; then
@@ -83,10 +83,10 @@ cleanup() {
 # Trap Ctrl+C (SIGINT) and SIGTERM
 trap cleanup SIGINT SIGTERM
 
-# 2. Compile binaries and hook library if missing
+# 2. Compile client if missing
 cd "$C_DIR"
-if [ ! -f "coap_client" ] || [ ! -f "libsocket_hook.dylib" ]; then
-    echo "Compiling client and hook shim..."
+if [ ! -f "coap_client" ]; then
+    echo "Compiling client..."
     make || exit 1
 fi
 
@@ -114,12 +114,12 @@ PIDS+=($SERVER_PID)
 echo "Waiting for Java Server to initialize (15 seconds)..."
 sleep 15
 
-# 5. Start 3 C Clients using the Socket Hook Shim
+# 5. Start 3 C Clients on loopback IP aliases
 cd "$C_DIR"
 for i in {1..3}; do
-    echo "Starting C Client $i (with SO_REUSEPORT hook)..."
-    DYLD_INSERT_LIBRARIES="$C_DIR/libsocket_hook.dylib" DYLD_FORCE_FLAT_NAMESPACE=1 \
-      ./coap_client -h 127.0.0.1 -p 5683 -r mult >/tmp/c_client_hook_${i}.log 2>&1 &
+    BIND_IP="127.0.0.$i"
+    echo "Starting C Client $i (bound to $BIND_IP)..."
+    ./coap_client -h 127.0.0.1 -p 5683 -r mult -b "$BIND_IP" >/tmp/c_client_alias_${i}.log 2>&1 &
     CLIENT_PID=$!
     PIDS+=($CLIENT_PID)
     sleep 0.5
