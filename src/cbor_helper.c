@@ -77,11 +77,18 @@ static cbor_item_t *build_cri(const char *host_str, uint16_t port) {
     return cri;
 }
 
-int encode_observation_info(const tp_info_t *tp, uint8_t **out_buf, size_t *out_len) {
+int encode_observation_info_full(const tp_info_t *tp,
+                                 const uint8_t *ph_req, size_t ph_req_len,
+                                 const uint8_t *last_notif, size_t last_notif_len,
+                                 uint8_t **out_buf, size_t *out_len) {
     if (!tp || !out_buf || !out_len) return -1;
 
-    // Root map of size 1 (key 0)
-    cbor_item_t *root = cbor_new_definite_map(1);
+    size_t map_size = 1;
+    if (ph_req && ph_req_len > 0) map_size++;
+    if (last_notif && last_notif_len > 0) map_size++;
+
+    // Root map
+    cbor_item_t *root = cbor_new_definite_map(map_size);
     if (!root) return -1;
 
     // tp_info array: [ tpi_server, tpi_client, tpi_token ]
@@ -116,16 +123,39 @@ int encode_observation_info(const tp_info_t *tp, uint8_t **out_buf, size_t *out_
     }
 
     // Add to map under key 0
-    cbor_item_t *key = cbor_build_uint8(0);
-    if (!key) {
+    cbor_item_t *key0 = cbor_build_uint8(0);
+    if (!key0) {
         cbor_decref(&tp_info);
         cbor_decref(&root);
         return -1;
     }
-
-    if (cbor_map_add(root, (struct cbor_pair){.key = cbor_move(key), .value = cbor_move(tp_info)}) == false) {
+    if (cbor_map_add(root, (struct cbor_pair){.key = cbor_move(key0), .value = cbor_move(tp_info)}) == false) {
         cbor_decref(&root);
         return -1;
+    }
+
+    // Add ph_req under key 1 if present
+    if (ph_req && ph_req_len > 0) {
+        cbor_item_t *key1 = cbor_build_uint8(1);
+        cbor_item_t *ph_val = cbor_build_bytestring(ph_req, ph_req_len);
+        if (!key1 || !ph_val || cbor_map_add(root, (struct cbor_pair){.key = cbor_move(key1), .value = cbor_move(ph_val)}) == false) {
+            if (key1) cbor_decref(&key1);
+            if (ph_val) cbor_decref(&ph_val);
+            cbor_decref(&root);
+            return -1;
+        }
+    }
+
+    // Add last_notif under key 2 if present
+    if (last_notif && last_notif_len > 0) {
+        cbor_item_t *key2 = cbor_build_uint8(2);
+        cbor_item_t *ln_val = cbor_build_bytestring(last_notif, last_notif_len);
+        if (!key2 || !ln_val || cbor_map_add(root, (struct cbor_pair){.key = cbor_move(key2), .value = cbor_move(ln_val)}) == false) {
+            if (key2) cbor_decref(&key2);
+            if (ln_val) cbor_decref(&ln_val);
+            cbor_decref(&root);
+            return -1;
+        }
     }
 
     // Serialize
@@ -137,6 +167,11 @@ int encode_observation_info(const tp_info_t *tp, uint8_t **out_buf, size_t *out_
     cbor_decref(&root);
     return 0;
 }
+
+int encode_observation_info(const tp_info_t *tp, uint8_t **out_buf, size_t *out_len) {
+    return encode_observation_info_full(tp, NULL, 0, NULL, 0, out_buf, out_len);
+}
+
 
 /* Helper to parse CRI from CBOR array: [ scheme-id, authority ] */
 static int parse_cri(cbor_item_t *cri_item, char *out_host, uint16_t *out_port) {

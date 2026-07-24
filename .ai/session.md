@@ -20,6 +20,8 @@ Completed.
 - Added packet capturing demo script `run_pcap_demo.sh` that captures the exchange in `demo.pcap` and prints a summary.
 - Added `run_java_server_pcap.sh` and `run_c_server_pcap.sh` to automate capturing and merging pcaps for both C and Java servers with mixed clients.
 - Refactored C client (`src/client.c`) to eliminate the unsolicited multicast GET request/phantom transmission over the wire, making it completely passive on the multicast group and verifying tokens in `hnd_response`.
+- Implemented `ph_req` and `last_notif` CBOR optional field encoding inside the C server's informative response (`src/server.c` / `src/cbor_helper.c`), providing fully compliant payload structure parsed successfully by the Java reference client.
+
 
 
 

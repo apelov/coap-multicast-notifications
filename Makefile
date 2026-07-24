@@ -10,7 +10,7 @@ CLIENT_TARGET = coap_client
 
 .PHONY: all clean
 
-all: $(SERVER_TARGET) $(CLIENT_TARGET)
+all: $(SERVER_TARGET) $(CLIENT_TARGET) libsocket_hook.dylib
 
 $(SERVER_TARGET): src/server.o $(OBJS_COMMON)
 	$(CC) $^ -o $@ $(LDFLAGS)
@@ -18,8 +18,12 @@ $(SERVER_TARGET): src/server.o $(OBJS_COMMON)
 $(CLIENT_TARGET): src/client.o $(OBJS_COMMON)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
+libsocket_hook.dylib: socket_hook.c
+	$(CC) -Wall -Wextra -O2 -dynamiclib -o $@ $< -ldl
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f src/*.o $(SERVER_TARGET) $(CLIENT_TARGET)
+	rm -f src/*.o $(SERVER_TARGET) $(CLIENT_TARGET) libsocket_hook.dylib
+

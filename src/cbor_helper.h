@@ -27,6 +27,16 @@ typedef struct {
 int encode_observation_info(const tp_info_t *tp, uint8_t **out_buf, size_t *out_len);
 
 /**
+ * Encodes the tp_info_t structure plus the optional ph_req and last_notif fields
+ * into standard CBOR format matching the Java reference implementation.
+ */
+int encode_observation_info_full(const tp_info_t *tp,
+                                 const uint8_t *ph_req, size_t ph_req_len,
+                                 const uint8_t *last_notif, size_t last_notif_len,
+                                 uint8_t **out_buf, size_t *out_len);
+
+
+/**
  * Decodes a CBOR buffer into the tp_info_t structure.
  * 
  * @param buf The input CBOR buffer.

@@ -82,10 +82,48 @@ static void hnd_get_obs(coap_resource_t *resource,
             memcpy(tp.token, group_token, group_token_len);
             tp.token_len = group_token_len;
 
+            // 1. Construct ph_req as a full UDP CoAP message to satisfy Java client parser:
+            // [Ver/T/TKL = 0x40] [Code = 0x01] [MID = 0x00 0x00] [Options...]
+            uint8_t ph_req[128];
+            size_t ph_req_len = 0;
+            ph_req[ph_req_len++] = 0x40; // Ver=1, Type=CON, TKL=0
+            ph_req[ph_req_len++] = 0x01; // Code: GET
+            ph_req[ph_req_len++] = 0x00; // MID high
+            ph_req[ph_req_len++] = 0x00; // MID low
+            ph_req[ph_req_len++] = 0x60; // Option: Observe (delta=6, len=0)
+
+            coap_str_const_t *uri_path = coap_resource_get_uri_path(resource);
+            const char *path = uri_path ? (const char *)uri_path->s : "obs";
+            size_t path_len = uri_path ? uri_path->length : 3;
+
+            if (path_len < 13) {
+                ph_req[ph_req_len++] = (5 << 4) | (path_len & 0x0F); // Uri-Path Option (delta=5, len=path_len)
+            } else {
+                ph_req[ph_req_len++] = (5 << 4) | 13;
+                ph_req[ph_req_len++] = path_len - 13;
+            }
+            memcpy(&ph_req[ph_req_len], path, path_len);
+            ph_req_len += path_len;
+
+            // 2. Construct last_notif (Multicast Init Notification representation)
+            char state_str[32];
+            snprintf(state_str, sizeof(state_str), "%d", sensor_value);
+            size_t state_len = strlen(state_str);
+
+            uint8_t last_notif[128];
+            size_t last_notif_len = 0;
+            last_notif[last_notif_len++] = 0x45; // Code: 2.05 Content
+            last_notif[last_notif_len++] = 0x61; // Option: Observe (delta=6, len=1)
+            last_notif[last_notif_len++] = 0x01; // Observe value: 1
+            last_notif[last_notif_len++] = 0x60; // Option: Content-Format (delta=6, len=0)
+            last_notif[last_notif_len++] = 0xFF; // Payload marker
+            memcpy(&last_notif[last_notif_len], state_str, state_len);
+            last_notif_len += state_len;
+
             uint8_t *cbor_buf = NULL;
             size_t cbor_len = 0;
 
-            if (encode_observation_info(&tp, &cbor_buf, &cbor_len) == 0) {
+            if (encode_observation_info_full(&tp, ph_req, ph_req_len, last_notif, last_notif_len, &cbor_buf, &cbor_len) == 0) {
                 // Return 5.03 Service Unavailable (RFC Section 4.2)
                 coap_pdu_set_code(response, COAP_RESPONSE_CODE(503));
                 
@@ -97,7 +135,7 @@ static void hnd_get_obs(coap_resource_t *resource,
                 // Add CBOR payload
                 coap_add_data(response, cbor_len, cbor_buf);
                 
-                printf("Sent 5.03 Informative Response with tp_info (%zu bytes CBOR)\n", cbor_len);
+                printf("Sent 5.03 Informative Response with tp_info, ph_req, and last_notif (%zu bytes CBOR)\n", cbor_len);
                 free(cbor_buf);
             } else {
                 coap_pdu_set_code(response, COAP_RESPONSE_CODE(500));

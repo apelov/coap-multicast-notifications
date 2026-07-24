@@ -51,6 +51,11 @@ static coap_response_t hnd_response(coap_session_t *session,
 
     if (code == COAP_RESPONSE_CODE(503) && (cf == 12 || cf == 120)) {
         printf("Detected CBOR Informative Response (ObservationInfo).\n");
+        printf("CBOR Payload Hex: ");
+        for (size_t i = 0; i < len; i++) {
+            printf("%02X", data[i]);
+        }
+        printf("\n");
         if (decode_observation_info(data, len, &mcast_tp) == 0) {
             printf("Decoded tp_info successfully:\n");
             printf("  Server Address:    %s:%d\n", mcast_tp.server_host, mcast_tp.server_port);
