@@ -18,6 +18,8 @@ Completed.
 - Fixed `coap_address_t` size structure initialization in C codebase (resolving socket bind/connect failures on macOS).
 - Enabled line-buffered output on C client/server `stdout` to ensure instant redirection logging.
 - Added packet capturing demo script `run_pcap_demo.sh` that captures the exchange in `demo.pcap` and prints a summary.
+- Added `run_java_server_pcap.sh` and `run_c_server_pcap.sh` to automate capturing and merging pcaps for both C and Java servers with mixed clients.
+
 
 
 
