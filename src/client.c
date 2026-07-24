@@ -8,6 +8,24 @@
 #include "cbor_helper.h"
 #include "oscore_helper.h"
 
+#include <dlfcn.h>
+#include <sys/socket.h>
+
+// Override system socket function to set SO_REUSEADDR and SO_REUSEPORT
+int socket(int domain, int type, int protocol) {
+    static int (*real_socket)(int, int, int) = NULL;
+    if (!real_socket) {
+        real_socket = dlsym(RTLD_NEXT, "socket");
+    }
+    int fd = real_socket(domain, type, protocol);
+    if (fd >= 0) {
+        int reuse = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
+    }
+    return fd;
+}
+
 #define DEFAULT_PORT 5683
 #define DEFAULT_HOST "127.0.0.1"
 
@@ -256,8 +274,16 @@ int main(int argc, char *argv[]) {
             }
 
             // 2. Join the multicast group on the endpoint
-            printf("Joining multicast group %s...\n", mcast_tp.client_host);
-            if (coap_join_mcast_group_intf(ctx, mcast_tp.client_host, NULL) < 0) {
+            const char *intf = NULL;
+            if (strncmp(bind_ip, "127.0.0.", 8) == 0 || strcmp(bind_ip, "127.0.0.1") == 0) {
+#ifdef __APPLE__
+                intf = "lo0";
+#else
+                intf = "lo";
+#endif
+            }
+            printf("Joining multicast group %s on interface %s...\n", mcast_tp.client_host, intf ? intf : "default");
+            if (coap_join_mcast_group_intf(ctx, mcast_tp.client_host, intf) < 0) {
                 fprintf(stderr, "Failed to join multicast group %s\n", mcast_tp.client_host);
                 quit = 1;
                 break;

@@ -21,6 +21,8 @@ Completed.
 - Added `run_java_server_pcap.sh` and `run_c_server_pcap.sh` to automate capturing and merging pcaps for both C and Java servers with mixed clients.
 - Refactored C client (`src/client.c`) to eliminate the unsolicited multicast GET request/phantom transmission over the wire, making it completely passive on the multicast group and verifying tokens in `hnd_response`.
 - Implemented `ph_req` and `last_notif` CBOR optional field encoding inside the C server's informative response (`src/server.c` / `src/cbor_helper.c`), providing fully compliant payload structure parsed successfully by the Java reference client.
+- Added cross-platform support (macOS/Linux preprocessors for lo/lo0, Makefile OS detection) and packaged clean source codes, runnable scripts, and PCAP interop evidence into `coap_multicast_observe_package.zip`.
+
 
 
 

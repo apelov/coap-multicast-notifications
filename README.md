@@ -1,86 +1,99 @@
-# CoAP Multicast Observe Implementation in C
+# CoAP Multicast Observe: Interoperable C Implementation
 
 This repository contains a fully documented, runnable, and maintainable C implementation of the CoAP Multicast Observe mechanism based on the IETF draft `draft-ietf-core-observe-multicast-notifications`.
 
 It is designed to interoperate with the Java reference implementation from the `adriankastrati/californium-thesis-work` repository (`multicast-notifications` branch) by matching its CBOR encoding, CoAP option formats, and protocol state machine.
 
-## Prerequisites
+---
 
-The project requires the standard **libcoap** and **libcbor** libraries.
+## Technical Features
 
-On macOS, you can install them via Homebrew:
+1. **Passive Multicast Client**: The C client (`coap_client`) performs a silent multicast join. It sends no unsolicited multicast request on the wire, listening purely passively and validating group tokens dynamically.
+2. **CBOR Informative Response (RFC compliance)**: The C server (`coap_server`) responds to observe requests with a `5.03 Service Unavailable` containing a complete CBOR payload containing:
+   - **Key 0 (`tp_info`)**: The transport info mapping `[scheme-id, authority]` for server/client endpoints and the group token.
+   - **Key 1 (`ph_req`)**: The client's unicast GET request represented in full UDP wire format (incorporating CoAP header `0x40 0x01...`), matching the decoding expectations of Californium.
+   - **Key 2 (`last_notif`)**: The initial multicast notification represented in transport-independent CoAP format (`[Code] [Options...] [0xFF Payload]`).
+3. **Cross-Platform**: Compiles and runs out of the box on both **macOS** and **Ubuntu/Linux**.
+
+---
+
+## Prerequisites & Installation
+
+### Ubuntu/Linux
+Install the compiler toolchain, packet utilities, and development headers for `libcoap` and `libcbor`:
 ```bash
-brew install libcoap libcbor
+sudo apt-get update
+sudo apt-get install -y build-essential clang pkg-config libcoap3-dev libcbor-dev tshark wireshark
 ```
+
+### macOS
+Install the libraries via Homebrew:
+```bash
+brew install libcoap libcbor pkg-config
+```
+
+---
 
 ## Compilation
 
-Build both the client and server using the provided `Makefile`:
+Build the client, server, and macOS socket-hooking shim using the provided cross-platform `Makefile`:
 ```bash
 make
 ```
 This generates the `coap_server` and `coap_client` binaries.
 
-To clean up build artifacts:
+---
+
+## Runnable Scripts (Ubuntu & macOS Portable)
+
+### 1. Conflict-Free Interop Run (1 Client)
+To run a clean interop test between the C Client and the Java Server, run:
 ```bash
-make clean
+./run_java_server_1c.sh
 ```
+This script will:
+- Spin up the Java Server.
+- Run 1 C Client bound to the wildcard address `0.0.0.0:56830`.
+- Capture all traffic for 60 seconds.
+- Output a clean trace file `java_server_1c.pcap` showing the complete registration handshake and multicast notifications.
 
-## Running the Demo
-
-### 1. Start the Server
-Start the CoAP server listening on port `5683` (unicast) and broadcasting notifications to the multicast address `224.0.1.187:56830`:
+### 2. Multi-Process Interop Run (3 Clients)
+To run 3 C Clients concurrently against the Java Server:
 ```bash
-./coap_server
+./run_java_server_3c.sh
 ```
-
-You can optionally enable **standard OSCORE** protection for the unicast registration phase using the `-s` flag:
-```bash
-./coap_server -s
-```
-
-### 2. Start Multiple Clients
-Open one or more terminal windows and start the clients:
-```bash
-./coap_client
-```
-
-If you enabled OSCORE on the server, you must also pass the `-s` flag to the clients:
-```bash
-./coap_client -s
-```
-
-### 3. Observe the Flow
-- The client sends a unicast GET request with `Observe=0` to `coap://127.0.0.1:5683/obs`.
-- The server responds with `5.03 Service Unavailable` containing the CBOR-serialized `tp_info` (which includes the multicast IP `224.0.1.187`, port `56830`, and the group Token `0x11223344`).
-- The client decodes the CBOR payload, prints the configuration, joins the multicast group, and registers a phantom observation relation locally.
-- Every 5 seconds, the server broadcasts a multicast CoAP `NON 2.05 Content` notification containing the updated state to `224.0.1.187:56830`.
-- All running clients receive the multicast notification and print the updated state.
+- **Ubuntu/Linux**: Loops back the entire `127.0.0.0/8` subnet natively. Sockets successfully bind to `127.0.0.1`, `127.0.0.2`, and `127.0.0.3` without port conflicts.
+- **macOS**: Requires registering the loopback IP aliases first (`sudo ifconfig lo0 alias 127.0.0.2 && sudo ifconfig lo0 alias 127.0.0.3`).
+- **Multicast Routing**: The C clients automatically detect loopback binding and join the multicast group on the loopback interface (`lo` on Linux, `lo0` on macOS).
 
 ---
 
-## Wireshark Traffic Analysis
+## PCAP Evidences
 
-To inspect the CoAP traffic:
-1. Open Wireshark and start a capture on the loopback interface (`lo0` on macOS, `lo` on Linux).
-2. Set the display filter to `coap`.
-3. You will see:
-   - **Unicast GET**: A `CON GET /obs` with the `Observe` option set to `0`. (Encrypted as OSCORE if `-s` is used).
-   - **Informative Response**: A `5.03 Service Unavailable` response containing a CBOR payload mapped to Content-Format `120` (`application/informative-response+cbor`). (Encrypted as OSCORE if `-s` is used).
-   - **Multicast Notifications**: Periodical `NON 2.05 Content` packets sent to the destination `224.0.1.187:56830` with Token `11223344` and the `Observe` option incremented for sequence tracking. Wireshark automatically dissects this as standard plain CoAP.
+- **`java_server_1c.pcap`**: A clean 16-packet trace demonstrating the complete, conflict-free interop handshake:
+  - Packets 1-4: Client (`31.133.135.154`) unicast registration (`GET /mult`) and Java Server's `5.03` response containing the full CBOR map.
+  - Packets 5-16: Periodic multicast notifications (`NON 2.05 Content`) broadcast to group `224.0.1.187:56830`.
+- **`java_server_3c.pcap`**: An interop trace showing 3 concurrent C clients successfully registering and receiving notifications over loopback.
+
+You can inspect these directly in Wireshark.
 
 ---
 
-## Interoperability & CBOR Format Details
+## CBOR Formatting Details
 
-Per the Java reference implementation from the thesis work, the `tp_info` parameter is serialized as a CBOR Map where key `0` points to the `tp_info` array:
-`{ 0: [ tpi_server, tpi_client, tpi_token ] }`
+The informative response CBOR map matches the draft definition:
+`{ 0: tp_info, ? 1: ph_req, ? 2: last_notif }`
 
-Where:
-- `tpi_server` / `tpi_client` are formatted as Constrained Resource Identifiers (CRIs): `[ scheme-id, authority ]`.
-- `scheme-id` is `-1` for `coap`.
+### 1. `tp_info` (Key 0)
+Formatted as `[ tpi_server, tpi_client, tpi_token ]`:
+- Servers/clients are represented as Constrained Resource Identifiers (CRIs): `[ scheme-id, authority ]`.
+- `scheme-id` is `-1` (CoAP).
 - `authority` is `[ host-ip-bytes, ?port ]`.
-- **IP Address**: The host IP address must be serialized as a CBOR **byte string** (`bstr`) of the raw IP bytes (e.g. `7F 00 00 01` for `127.0.0.1`), NOT a text string.
-- **Port Omission**: If the port is the default CoAP port (`5683`), it is omitted from the authority array to save space.
+- **IP Address**: Encoded as a byte string (`bstr`), e.g., `7F 00 00 01` (not a text string).
+- **Port Omission**: If the port is default (`5683`), it is omitted.
 
-The helper functions in `src/cbor_helper.c` implement this format precisely to achieve 100% binary-level compatibility with the Java codebase.
+### 2. `ph_req` (Key 1)
+Serialized as a `bstr` representing the client's unicast registration GET request. The Java Californium parser expects this to include the standard CoAP UDP header (`[Ver/T/TKL = 0x40] [Code = 0x01] [MID = 0x00 0x00] [Observe Option = 0x60] [Uri-Path Option]`).
+
+### 3. `last_notif` (Key 2)
+Serialized as a `bstr` representing the initial multicast notification in transport-independent CoAP format (`[Code (0x45)] [Observe Option (0x61 0x01)] [Content-Format Option (0x60)] [0xFF payload marker] [Payload]`).
