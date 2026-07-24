@@ -1,5 +1,5 @@
-# Agent scratch files
-.ai/scratch/
+# Agent workspace files
+.ai/
 
 # Compiled binaries
 coap_server
