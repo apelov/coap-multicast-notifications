@@ -16,7 +16,6 @@ static int mcast_setup_needed = 0;
 static tp_info_t mcast_tp;
 
 static coap_session_t *unicast_session = NULL;
-static coap_session_t *mcast_session = NULL;
 
 static void handle_sigint(int signum) {
     (void)signum;
@@ -85,13 +84,28 @@ static coap_response_t hnd_response(coap_session_t *session,
             obs_seq = coap_decode_var_bytes(coap_opt_value(obs_opt), coap_opt_length(obs_opt));
         }
 
-        // Print payload
-        char *payload_str = malloc(len + 1);
-        if (payload_str) {
-            memcpy(payload_str, data, len);
-            payload_str[len] = '\0';
-            printf("[NOTIFICATION] sequence=%u state=%s\n", obs_seq, payload_str);
-            free(payload_str);
+        // Verify token matches our group token
+        coap_bin_const_t rcvd_token = coap_pdu_get_token(received);
+        int token_match = 0;
+        if (mcast_tp.token_len > 0) {
+            if (rcvd_token.length == mcast_tp.token_len &&
+                memcmp(rcvd_token.s, mcast_tp.token, rcvd_token.length) == 0) {
+                token_match = 1;
+            }
+        } else {
+            // Default to matching if group token was not configured
+            token_match = 1;
+        }
+
+        if (token_match) {
+            // Print payload
+            char *payload_str = malloc(len + 1);
+            if (payload_str) {
+                memcpy(payload_str, data, len);
+                payload_str[len] = '\0';
+                printf("[NOTIFICATION] sequence=%u state=%s\n", obs_seq, payload_str);
+                free(payload_str);
+            }
         }
     }
 
@@ -244,48 +258,6 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
-            // 3. Open a multicast session to mapping target
-            coap_address_t mcast_dest;
-            coap_address_init(&mcast_dest);
-            mcast_dest.size = sizeof(mcast_dest.addr.sin);
-            mcast_dest.addr.sin.sin_family = AF_INET;
-            mcast_dest.addr.sin.sin_port = htons(mcast_tp.client_port);
-            inet_pton(AF_INET, mcast_tp.client_host, &mcast_dest.addr.sin.sin_addr);
-
-            mcast_session = coap_new_client_session(ctx, NULL, &mcast_dest, COAP_PROTO_UDP);
-            if (!mcast_session) {
-                fprintf(stderr, "Failed to establish multicast session\n");
-                quit = 1;
-                break;
-            }
-
-            // 4. Inject a phantom request to let libcoap register and track the group Token
-            coap_pdu_t *phantom_pdu = coap_new_pdu(COAP_MESSAGE_NON, (coap_pdu_code_t)COAP_REQUEST_GET, mcast_session);
-            if (!phantom_pdu) {
-                fprintf(stderr, "Failed to create phantom PDU\n");
-                quit = 1;
-                break;
-            }
-
-            // Add group Token
-            coap_add_token(phantom_pdu, mcast_tp.token_len, mcast_tp.token);
-
-            // Add Observe option
-            coap_add_option(phantom_pdu, COAP_OPTION_OBSERVE, obs_len, obs_buf);
-
-            // Add Uri-Path option: resource_path
-            coap_add_option(phantom_pdu, COAP_OPTION_URI_PATH, strlen(resource_path), (const uint8_t *)resource_path);
-
-            printf("Injecting phantom observe request with token 0x");
-            for (size_t i = 0; i < mcast_tp.token_len; i++) {
-                printf("%02X", mcast_tp.token[i]);
-            }
-            printf(" on multicast session.\n");
-
-            if (coap_send(mcast_session, phantom_pdu) == COAP_INVALID_MID) {
-                fprintf(stderr, "Failed to send phantom request\n");
-            }
-
             printf("Client is now listening for multicast notifications...\n");
         }
     }
@@ -293,9 +265,7 @@ int main(int argc, char *argv[]) {
     if (unicast_session) {
         coap_session_release(unicast_session);
     }
-    if (mcast_session) {
-        coap_session_release(mcast_session);
-    }
+
     coap_free_context(ctx);
     coap_cleanup();
 
