@@ -5,6 +5,9 @@
 #include <signal.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/resource.h>
 #include "cbor_helper.h"
 #include "oscore_helper.h"
 
@@ -25,6 +28,53 @@ static uint16_t mcast_port = DEFAULT_MCAST_PORT;
 
 static coap_session_t *mcast_session = NULL;
 
+/* The latest multicast notification, in the transport-independent form of Section 4.2.2:
+ * the code byte, then the options, then the payload — no version/TKL, Message ID or Token.
+ * draft-ietf-core-observe-multicast-notifications-15 Section 4.3 requires the server to store
+ * the latest multicast notification, and a client registering later is served that very
+ * message as 'last_notif' (Section 4.2). It starts as INIT_NOTIF, which is composed once and
+ * never transmitted (Section 4.1 step 6), and is replaced by the bytes of each notification
+ * actually sent on the wire, so the Observe Option it carries is always the one that went out. */
+static uint8_t last_notif[128];
+static size_t last_notif_len = 0;
+
+/* Composes INIT_NOTIF: 2.05 | Observe 0 | Content-Format text/plain | payload.
+ * The Observe Option is empty (value 0) because INIT_NOTIF is never sent and the first
+ * notification on the wire carries Observe 1; the numbering is strictly increasing from there. */
+static size_t build_init_notif(uint8_t *ti, size_t ti_len, const char *payload) {
+    size_t plen = strlen(payload);
+    size_t n = 0;
+
+    if (ti_len < 5 + plen)
+        return 0;
+    ti[n++] = (uint8_t)COAP_RESPONSE_CODE(205);          /* 2.05 Content */
+    ti[n++] = 0x60;                                       /* Observe, empty value = 0 */
+    ti[n++] = 0x60;                                       /* Content-Format, empty value = text/plain */
+    ti[n++] = 0xFF;                                       /* payload marker */
+    memcpy(ti + n, payload, plen);
+    return n + plen;
+}
+
+/* The transport-independent form of a multicast notification built by build_notification():
+ * its code byte, then everything from the first option on. */
+static size_t notification_ti(const uint8_t *udp, size_t udp_len, uint8_t *ti, size_t ti_len) {
+    size_t token_off = 4 + group_token_len;               /* version/TKL, code, MID, Token */
+
+    if (udp_len <= token_off || ti_len < 1 + (udp_len - token_off))
+        return 0;
+    ti[0] = udp[1];                                       /* the code byte */
+    memcpy(ti + 1, udp + token_off, udp_len - token_off);
+    return 1 + (udp_len - token_off);
+}
+
+// Port the server endpoint listens on; the multicast notifications are sent
+// from that same endpoint, so they inherit SRV_PORT.
+static uint16_t srv_port = DEFAULT_PORT;
+
+// Cached descriptor of the server endpoint's own UDP socket (see
+// server_endpoint_sock()); -1 until it is found.
+static int srv_sock_fd = -1;
+
 static void handle_sigint(int signum) {
     (void)signum;
     quit = 1;
@@ -44,6 +94,19 @@ static void hnd_get_obs(coap_resource_t *resource,
     if (opt) {
         uint32_t observe_val = coap_decode_var_bytes(coap_opt_value(opt), coap_opt_length(opt));
         if (observe_val == 0) {
+            // draft-15 Section 4.2: the informative response "MUST be a Confirmable message
+            // sent as a separate response" (RFC 7252 Section 5.2.2).  The first call registers
+            // an async response, which makes libcoap send the empty ACK; the response is built
+            // when libcoap calls the handler again, and goes out as a CON.
+            coap_async_t *async = coap_find_async(session, coap_pdu_get_token(request));
+            if (!async) {
+                async = coap_register_async(session, request, 0);
+                if (async)
+                    coap_async_trigger(async);
+                else
+                    coap_pdu_set_code(response, COAP_RESPONSE_CODE(500));
+                return;
+            }
             const coap_address_t *peer_addr = coap_session_get_addr_remote(session);
             char peer_ip[MAX_HOST_LEN] = "unknown";
             uint16_t peer_port = 0;
@@ -102,20 +165,14 @@ static void hnd_get_obs(coap_resource_t *resource,
             memcpy(&ph_req[ph_req_len], path, path_len);
             ph_req_len += path_len;
 
-            // 2. Construct last_notif (Multicast Init Notification representation)
-            char state_str[32];
-            snprintf(state_str, sizeof(state_str), "%d", sensor_value);
-            size_t state_len = strlen(state_str);
-
-            uint8_t last_notif[128];
-            size_t last_notif_len = 0;
-            last_notif[last_notif_len++] = 0x45; // Code: 2.05 Content
-            last_notif[last_notif_len++] = 0x61; // Option: Observe (delta=6, len=1)
-            last_notif[last_notif_len++] = 0x01; // Observe value: 1
-            last_notif[last_notif_len++] = 0x60; // Option: Content-Format (delta=6, len=0)
-            last_notif[last_notif_len++] = 0xFF; // Payload marker
-            memcpy(&last_notif[last_notif_len], state_str, state_len);
-            last_notif_len += state_len;
+            // 2. last_notif: the latest multicast notification as stored by the server
+            //    (Section 4.3) — INIT_NOTIF until the first notification has been sent,
+            //    then the bytes of that notification as they went on the wire.
+            if (last_notif_len == 0) {
+                char init_payload[32];
+                snprintf(init_payload, sizeof(init_payload), "%d", sensor_value);
+                last_notif_len = build_init_notif(last_notif, sizeof(last_notif), init_payload);
+            }
 
             uint8_t *cbor_buf = NULL;
             size_t cbor_len = 0;
@@ -123,6 +180,7 @@ static void hnd_get_obs(coap_resource_t *resource,
             if (encode_observation_info_full(&tp, ph_req, ph_req_len, last_notif, last_notif_len, &cbor_buf, &cbor_len) == 0) {
                 // Return 5.03 Service Unavailable (RFC Section 4.2)
                 coap_pdu_set_code(response, COAP_RESPONSE_CODE(503));
+                coap_pdu_set_type(response, COAP_MESSAGE_CON);
                 
                 // Add Content-Format option: 12 (application/informative-response+cbor)
                 uint8_t cf_buf[4];
@@ -148,6 +206,128 @@ static void hnd_get_obs(coap_resource_t *resource,
     coap_add_data(response, strlen(payload), (const uint8_t *)payload);
 }
 
+// draft-15 §4.3: a multicast notification "MUST be sent from the same IP
+// address SRV_ADDR and port number SRV_PORT where the corresponding
+// informative responses are sent from by the server ... redirection MUST NOT
+// be used".  A libcoap client session with an unbound local address cannot
+// honour that -- the kernel picks an ephemeral source port -- so the
+// notification is serialised here and written straight to the server
+// endpoint's own socket, the way src/sec/sec_group.c:sec_mcast_send() does
+// for the secure server.  The bytes on the wire are otherwise unchanged.
+//
+// This build sees only libcoap's installed public headers, which declare
+// coap_endpoint_t and coap_socket_t as opaque: no public call returns the
+// endpoint's socket (coap_context_get_coap_fd() is the DTLS socket, not it),
+// and a second UDP socket cannot be bound to the same port (macOS returns
+// EADDRINUSE even with SO_REUSEADDR, which libcoap already sets).  The
+// endpoint is the one UDP socket in this process bound to srv_port, so that
+// is the property used to find it.  The answer is cached and re-validated
+// before every send.
+static int server_endpoint_sock(void) {
+    struct sockaddr_in local;
+    socklen_t local_len = sizeof(local);
+
+    if (srv_sock_fd >= 0 &&
+        getsockname(srv_sock_fd, (struct sockaddr *)&local, &local_len) == 0 &&
+        local.sin_family == AF_INET && ntohs(local.sin_port) == srv_port)
+        return srv_sock_fd;
+
+    srv_sock_fd = -1;
+    struct rlimit rl;
+    int maxfd = 256;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY &&
+        (rlim_t)maxfd < rl.rlim_cur)
+        maxfd = (int)rl.rlim_cur;
+    if (maxfd > 65536) maxfd = 65536;
+
+    for (int fd = 0; fd < maxfd; fd++) {
+        int type = 0;
+        socklen_t type_len = sizeof(type);
+        if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_len) < 0 ||
+            type != SOCK_DGRAM)
+            continue;
+        local_len = sizeof(local);
+        if (getsockname(fd, (struct sockaddr *)&local, &local_len) < 0)
+            continue;
+        if (local.sin_family != AF_INET || ntohs(local.sin_port) != srv_port)
+            continue;
+        srv_sock_fd = fd;
+        break;
+    }
+    return srv_sock_fd;
+}
+
+// RFC 7252 §3.1 option encoding: the option delta and length share one header
+// byte, with the 13/14/15 extended nibbles so a long Observe value still
+// encodes correctly.  Returns the new offset, or -1.
+static int put_option(uint8_t *buf, size_t off, size_t buflen,
+                      unsigned delta, const uint8_t *val, size_t vlen) {
+    unsigned d = delta, l = (unsigned)vlen;
+    unsigned dn = d < 13 ? d : d < 269 ? 13 : 14;   /* nibble: value, 13 (+1 byte), 14 (+2 bytes) */
+    unsigned ln = l < 13 ? l : l < 269 ? 13 : 14;
+    size_t ext = (dn == 13 ? 1 : dn == 14 ? 2 : 0) + (ln == 13 ? 1 : ln == 14 ? 2 : 0);
+
+    if (d > 65804 || l > 65804 || buflen - off < 1 + ext + vlen)
+        return -1;
+    buf[off++] = (uint8_t)((dn << 4) | ln);
+    if (dn == 13) {
+        buf[off++] = (uint8_t)(d - 13);
+    } else if (dn == 14) {
+        buf[off++] = (uint8_t)((d - 269) >> 8);
+        buf[off++] = (uint8_t)((d - 269) & 0xFF);
+    }
+    if (ln == 13) {
+        buf[off++] = (uint8_t)(l - 13);
+    } else if (ln == 14) {
+        buf[off++] = (uint8_t)((l - 269) >> 8);
+        buf[off++] = (uint8_t)((l - 269) & 0xFF);
+    }
+    memcpy(buf + off, val, vlen);
+    return (int)(off + vlen);
+}
+
+// Serialise the notification exactly as coap_pdu_init()/coap_add_token()/
+// coap_add_option()/coap_add_data() used to: 4-byte header, group token,
+// Observe (6) then Content-Format (12) -- the same option numbers, order and
+// values, so the bytes are identical -- payload marker, payload.
+static int build_notification(uint8_t *buf, size_t buflen, uint16_t mid,
+                              uint32_t seq, const char *payload, size_t *out_len) {
+    uint8_t obs[8];
+    unsigned obs_len = coap_encode_var_safe(obs, sizeof(obs), seq);
+    size_t plen = strlen(payload);
+    size_t n = 0;
+
+    if (buflen < 4 + group_token_len + 2 + sizeof(obs) + 1 + 1 + plen)
+        return -1;
+
+    // Version 1, type NON, 4-byte token
+    buf[n++] = (uint8_t)((1u << 6) | ((unsigned)COAP_MESSAGE_NON << 4) |
+                         (unsigned)group_token_len);
+    buf[n++] = (uint8_t)COAP_RESPONSE_CODE(205);
+    buf[n++] = (uint8_t)(mid >> 8);
+    buf[n++] = (uint8_t)(mid & 0xff);
+    memcpy(buf + n, group_token, group_token_len);
+    n += group_token_len;
+
+    // Observe option (sequence number)
+    n = put_option(buf, n, buflen, COAP_OPTION_OBSERVE, obs, obs_len);
+    if (n < 0)
+        return -1;
+    // Content-Format (text/plain = 0), encoded as an empty value
+    n = put_option(buf, n, buflen,
+                   COAP_OPTION_CONTENT_FORMAT - COAP_OPTION_OBSERVE, NULL, 0);
+    if (n < 0)
+        return -1;
+
+    // Payload
+    buf[n++] = 0xff;
+    memcpy(buf + n, payload, plen);
+    n += plen;
+
+    *out_len = n;
+    return 0;
+}
+
 static void send_multicast_notification(coap_context_t *ctx) {
     if (!mcast_session) {
         coap_address_t dst_addr;
@@ -166,41 +346,66 @@ static void send_multicast_notification(coap_context_t *ctx) {
         }
     }
 
-    coap_pdu_t *pdu = coap_pdu_init(COAP_MESSAGE_NON, COAP_RESPONSE_CODE(205),
-                                    coap_new_message_id(mcast_session), 256);
-    if (!pdu) {
+    // Set payload
+    char payload[32];
+    snprintf(payload, sizeof(payload), "%d", sensor_value);
+
+    uint8_t udp[256];
+    size_t udp_len = 0;
+    if (build_notification(udp, sizeof(udp), coap_new_message_id(mcast_session),
+                           observe_seq++, payload, &udp_len) != 0) {
         fprintf(stderr, "Failed to initialize PDU for multicast notification\n");
         return;
     }
 
-    // Set group token
-    if (coap_add_token(pdu, group_token_len, group_token) == 0) {
-        fprintf(stderr, "Failed to add token to notification PDU\n");
-        coap_delete_pdu(pdu);
-        return;
-    }
-
-    // Set Observe option (sequence number)
-    uint8_t obs_buf[4];
-    size_t obs_len = coap_encode_var_safe(obs_buf, sizeof(obs_buf), observe_seq++);
-    coap_add_option(pdu, COAP_OPTION_OBSERVE, obs_len, obs_buf);
-
-    // Set Content-Format option (text/plain = 0)
-    uint8_t cf_buf[4];
-    size_t cf_len = coap_encode_var_safe(cf_buf, sizeof(cf_buf), COAP_MEDIATYPE_TEXT_PLAIN);
-    coap_add_option(pdu, COAP_OPTION_CONTENT_FORMAT, cf_len, cf_buf);
-
-    // Set payload
-    char payload[32];
-    snprintf(payload, sizeof(payload), "%d", sensor_value);
-    coap_add_data(pdu, strlen(payload), (const uint8_t *)payload);
-
     printf("Broadcasting multicast notification: state=%d sequence=%u token=0x11223344 to %s:%u\n",
            sensor_value, observe_seq - 1, mcast_ip, mcast_port);
 
-    if (coap_send(mcast_session, pdu) == COAP_INVALID_MID) {
-        fprintf(stderr, "Failed to send multicast notification\n");
+    int fd = server_endpoint_sock();
+    if (fd < 0) {
+        fprintf(stderr, "Failed to find the server endpoint's socket on port %u\n",
+                (unsigned)srv_port);
+        return;
     }
+
+    struct sockaddr_in to, local;
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_port = htons(mcast_port);
+    if (inet_pton(AF_INET, mcast_ip, &to.sin_addr) != 1 ||
+        !IN_MULTICAST(ntohl(to.sin_addr.s_addr))) {
+        fprintf(stderr, "Invalid multicast IP: %s\n", mcast_ip);
+        return;
+    }
+
+    // The endpoint is bound to INADDR_ANY:SRV_PORT, so its local address is
+    // the wildcard and the outgoing interface stays the one the route picks
+    // (lo0 on this host, as before); a concrete address is used when there is
+    // one.  IP_MULTICAST_LOOP does not add the endpoint to the group, so the
+    // server does not receive its own notifications.
+    socklen_t local_len = sizeof(local);
+    if (getsockname(fd, (struct sockaddr *)&local, &local_len) < 0 ||
+        local.sin_family != AF_INET) {
+        perror("Failed to read the server endpoint's local address");
+        return;
+    }
+    unsigned char loop = 1;
+    if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &local.sin_addr,
+                   sizeof(local.sin_addr)) < 0 ||
+        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop)) < 0) {
+        perror("Failed to configure multicast on the server endpoint");
+        return;
+    }
+
+    if (sendto(fd, udp, udp_len, 0, (struct sockaddr *)&to, sizeof(to)) !=
+        (ssize_t)udp_len) {
+        perror("Failed to send multicast notification");
+        return;
+    }
+
+    // Section 4.3: store what was actually sent, so that a client registering later is
+    // served this very notification as 'last_notif', Observe Option included.
+    last_notif_len = notification_ti(udp, udp_len, last_notif, sizeof(last_notif));
 }
 int main(int argc, char *argv[]) {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -258,6 +463,7 @@ int main(int argc, char *argv[]) {
         coap_free_context(ctx);
         return 1;
     }
+    srv_port = (uint16_t)port;
 
     // Enable OSCORE if requested
     if (use_oscore) {

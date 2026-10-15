@@ -1,0 +1,93 @@
+# Group OSCORE needs a libcoap fork; `make deps` clones it at the pinned revision.
+LC        ?= build/libcoap-fork
+FORK_URL  ?= https://github.com/apelov/libcoap.git
+FORK_SHA  := d070fb3063074e10b88f51c40711fff00e9425bc
+# Homebrew OpenSSL on macOS; on Linux the system OpenSSL is found without extra flags.
+OPENSSL   ?= $(shell brew --prefix openssl@3 2>/dev/null)
+ifneq ($(OPENSSL),)
+OPENSSL_LIB  = -L$(OPENSSL)/lib
+OPENSSL_INC  = -I$(OPENSSL)/include
+OPENSSL_CMAKE = -DOPENSSL_ROOT_DIR=$(OPENSSL)
+endif
+
+CC      ?= clang
+CFLAGS  += -std=gnu11 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-function
+LDLIBS  += $(OPENSSL_LIB) -lssl -lcrypto -lpthread $(shell pkg-config --libs libcbor)
+
+PATCHED_DIR = build/secure/libcoap
+PATCHED_INC = -I$(PATCHED_DIR)/obj/include -I$(PATCHED_DIR)/obj -I$(PATCHED_DIR)/src/include $(OPENSSL_INC)
+PATCHED_LIB = $(PATCHED_DIR)/obj/libcoap-3.a
+PATCHES     = $(sort $(wildcard patches/libcoap/*.patch))
+
+# Include fork headers first, then libcbor
+CFLAGS += $(PATCHED_INC) $(shell pkg-config --cflags libcbor) -Isrc
+
+SEC_SRCS = src/sec/sec_config.c src/sec/sec_debug.c src/sec/sec_ir.c src/sec/sec_group.c src/sec/sec_ti.c src/sec/sec_state.c
+BUILD_DIR = build/secure
+SEC_OBJS = $(patsubst src/sec/%.c,$(BUILD_DIR)/obj/%.o,$(SEC_SRCS)) $(BUILD_DIR)/obj/cbor_helper.o
+
+SERVER_SEC = coap_server_sec
+CLIENT_SEC = coap_client_sec
+
+TEST_SRCS = $(wildcard tests/sec/test_*.c)
+TEST_BINS = $(patsubst tests/sec/%.c,$(BUILD_DIR)/tests/%,$(TEST_SRCS))
+
+
+.PHONY: all deps test clean distclean
+
+all: $(SERVER_SEC) $(CLIENT_SEC)
+
+deps: $(LC)/.git
+
+$(LC)/.git:
+	@mkdir -p $(dir $(LC))
+	git clone --quiet $(FORK_URL) $(LC)
+	git -C $(LC) checkout --quiet $(FORK_SHA)
+
+$(PATCHED_LIB): $(PATCHES) $(LC)/.git
+	@rm -rf $(PATCHED_DIR)/src $(PATCHED_DIR)/obj
+	@mkdir -p $(PATCHED_DIR)/src
+	@git -C $(LC) archive $(FORK_SHA) | tar -x -C $(PATCHED_DIR)/src
+	@for p in $(PATCHES); do echo "apply $$p"; patch -s -d $(PATCHED_DIR)/src -p1 < $$p || exit 1; done
+	@cmake -S $(PATCHED_DIR)/src -B $(PATCHED_DIR)/obj \
+	  -DENABLE_OSCORE=ON -DENABLE_OSCORE_GROUP=ON \
+	  -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl $(OPENSSL_CMAKE) \
+	  -DENABLE_DOCS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF \
+	  -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug >/dev/null
+	@cmake --build $(PATCHED_DIR)/obj -j 8 --target coap-3 >/dev/null
+
+$(SERVER_SEC): $(BUILD_DIR)/bin/$(SERVER_SEC)
+	cp $< $@
+
+$(CLIENT_SEC): $(BUILD_DIR)/bin/$(CLIENT_SEC)
+	cp $< $@
+
+$(BUILD_DIR)/bin/$(SERVER_SEC): $(BUILD_DIR)/obj/server_sec.o $(SEC_OBJS) $(PATCHED_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BUILD_DIR)/bin/$(CLIENT_SEC): $(BUILD_DIR)/obj/client_sec.o $(SEC_OBJS) $(PATCHED_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BUILD_DIR)/obj/%.o: src/sec/%.c $(PATCHED_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/obj/cbor_helper.o: src/cbor_helper.c $(PATCHED_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/tests/%: tests/sec/%.c $(SEC_OBJS) $(PATCHED_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+test: $(TEST_BINS)
+	@for t in $(TEST_BINS); do echo "Running $$t..."; ./$$t || exit 1; done
+
+clean:
+	rm -f $(SERVER_SEC) $(CLIENT_SEC)
+	find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name libcoap -exec rm -rf {} + 2>/dev/null || true
+
+distclean: clean
+	rm -rf build/secure

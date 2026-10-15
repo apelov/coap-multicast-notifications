@@ -63,7 +63,7 @@ echo "=================================================="
 # 1. Compile binaries if needed
 if [ ! -f ./coap_server ] || [ ! -f ./coap_client ]; then
     echo "Compiling binaries..."
-    make || exit 1
+    make vienna || exit 1
 fi
 
 # 2. Start the server in the background

@@ -1,0 +1,13 @@
+The project's own code (src/, tests/, tools/, socket_hook.c, Makefiles, scripts) is MIT
+licensed; see LICENSE.
+
+Other material keeps its own terms:
+
+- patches/libcoap/*.patch are patches to libcoap (https://github.com/obgm/libcoap, fork
+  mrdeep1/libcoap, branch oscore_group; mirrored at apelov/libcoap) and are offered under libcoap's BSD-2-Clause licence.
+  The fork is downloaded by `make deps`; it is not redistributed here.
+- docs/secure/*.txt are IETF documents (Internet-Drafts and RFCs). They are NOT covered by
+  the MIT licence; they remain subject to the IETF Trust's Legal Provisions
+  (https://trustee.ietf.org/license-info). Internet-Drafts are works in progress and expire.
+- Build-time dependencies (libcoap, libcbor, OpenSSL) are installed from your system and
+  keep their own licences.

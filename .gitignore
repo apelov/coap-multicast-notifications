@@ -1,15 +1,11 @@
-# Agent workspace files
-.ai/
-
-# Compiled binaries
+build/
 coap_server
 coap_client
-
-# Object files
+coap_server_sec
+coap_client_sec
 src/*.o
-
-# PCAP files
-*.pcap
-# Compiled libraries
 *.dylib
 *.so
+*.pcap
+.DS_Store
+__pycache__/
