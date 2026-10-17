@@ -12,6 +12,9 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
+#ifdef COAP_EPOLL_SUPPORT
+#include <sys/epoll.h>
+#endif
 
 sec_config_t conf;
 sec_cli_gobs_t gobs;

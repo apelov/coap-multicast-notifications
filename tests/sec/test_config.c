@@ -38,6 +38,8 @@ int main(void) {
     sec_config_t srv, cli;
     int rc;
 
+    coap_set_log_level(COAP_LOG_ERR);
+
     rc = sec_config_load("docs/secure/examples/java-demo/server.conf", &srv);
     OK(rc == 0, "Loaded server.conf");
     OK(srv.is_server == 1, "Server role parsed");

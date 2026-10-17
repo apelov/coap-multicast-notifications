@@ -55,6 +55,8 @@ int main(void) {
     OK(server && client, "published section10 group contexts load");
     if (!server || !client) DONE();
 
+    coap_set_log_level(COAP_LOG_ERR);
+
     sec_grp_t grp = { server };
     sec_srv_gobs_t gobs;
     const uint8_t token[] = { 0x7b };
