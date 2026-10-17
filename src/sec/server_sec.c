@@ -188,7 +188,7 @@ static void hnd_observe(coap_resource_t *resource,
          * increase from there — the representation the Java server composes, and what a
          * client takes the starting point of its own Observe sequence from. */
         gobs.observe = 0;
-        char initial_state[64] = "0";
+        char initial_state[130] = "0";
         if (conf.values[0]) {
             const char *comma = strchr(conf.values, ',');
             if (comma) {

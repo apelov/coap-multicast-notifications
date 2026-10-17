@@ -9,6 +9,9 @@ A C implementation of [draft-ietf-core-observe-multicast-notifications-15](docs/
   notifications: `coap_server_sec`, `coap_client_sec`. This needs a libcoap fork with Group OSCORE
   support plus six small patches (`patches/libcoap/`), fetched and built privately under `build/`.
 
+Alternatively, if the LC variable points to your copy of a git clone of libcoap, that version of libcoap
+will get used for code testing.
+
 Status: research code written for interoperability testing against the draft authors' Java
 (Californium) implementation. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design.
 

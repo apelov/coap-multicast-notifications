@@ -47,6 +47,8 @@ int main(void) {
     OK(server && client, "contexts load");
     if (!server || !client) DONE();
 
+    coap_set_log_level(COAP_LOG_ERR);
+
     sec_grp_t sgrp = { server };
     sec_srv_gobs_t gobs;
     const uint8_t token[] = { 0x7b };
@@ -125,6 +127,7 @@ int main(void) {
     coap_delete_pdu(plain);
     bad_len = sec_ti_export(osc, bad_ph, bad_len);
     coap_delete_pdu(osc);
+    oscore_delete_server_associations(sess);
     free(sess);
 
     int ok_obs1 = sec_phantom_verify(&cgrp, bad_ph, bad_len, token, sizeof(token), "r", 0, &parsed);
@@ -158,6 +161,7 @@ int main(void) {
     OK(dec2 == NULL, "normal replay protection: replayed request rejected");
     if (dec2) coap_delete_pdu(dec2);
 normal_cleanup:
+    oscore_delete_server_associations(sess2);
     free(sess2);
 
     // 3. Negative test for Java wrapper

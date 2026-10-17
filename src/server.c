@@ -282,7 +282,8 @@ static int put_option(uint8_t *buf, size_t off, size_t buflen,
         buf[off++] = (uint8_t)((l - 269) >> 8);
         buf[off++] = (uint8_t)((l - 269) & 0xFF);
     }
-    memcpy(buf + off, val, vlen);
+    if (val)
+      memcpy(buf + off, val, vlen);
     return (int)(off + vlen);
 }
 

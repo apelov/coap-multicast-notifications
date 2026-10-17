@@ -42,6 +42,8 @@ int main(void) {
     coap_context_oscore_server(ctx, oc);
     oscore_ctx_t *osc = ctx->p_osc_ctx;
 
+    coap_set_log_level(COAP_LOG_ERR);
+
     sec_tuple_t req;
     req.kid_len = 1; req.kid[0] = 0x52;
     req.piv_len = 1; req.piv[0] = 0x00;

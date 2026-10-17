@@ -1,5 +1,9 @@
 # Group OSCORE needs a libcoap fork; `make deps` clones it at the pinned revision.
-LC        ?= build/libcoap-fork
+
+# Default location, unless overwritten with LC=
+PATCHED_BUILD = build/libcoap-fork
+
+LC        ?= $(PATCHED_BUILD)
 FORK_URL  ?= https://github.com/apelov/libcoap.git
 FORK_SHA  := d070fb3063074e10b88f51c40711fff00e9425bc
 # Homebrew OpenSSL on macOS; on Linux the system OpenSSL is found without extra flags.
@@ -14,10 +18,19 @@ CC      ?= clang
 CFLAGS  += -std=gnu11 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-function
 LDLIBS  += $(OPENSSL_LIB) -lssl -lcrypto -lpthread $(shell pkg-config --libs libcbor)
 
+ifeq ($(LC), $(PATCHED_BUILD))
 PATCHED_DIR = build/secure/libcoap
 PATCHED_INC = -I$(PATCHED_DIR)/obj/include -I$(PATCHED_DIR)/obj -I$(PATCHED_DIR)/src/include $(OPENSSL_INC)
 PATCHED_LIB = $(PATCHED_DIR)/obj/libcoap-3.a
 PATCHES     = $(sort $(wildcard patches/libcoap/*.patch))
+else
+PATCHED_DIR = build_ext_libcoap
+PATCHED_INC = -I$(PATCHED_DIR)/include -I$(LC)/include -I$(LC)/ $(OPENSSL_INC)
+PATCHED_LIB = $(PATCHED_DIR)/libcoap-3.a
+PATCHES     = 
+CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -fsanitize-address-use-after-scope
+endif
+
 
 # Include fork headers first, then libcbor
 CFLAGS += $(PATCHED_INC) $(shell pkg-config --cflags libcbor) -Isrc
@@ -45,6 +58,8 @@ $(LC)/.git:
 	git -C $(LC) checkout --quiet $(FORK_SHA)
 
 $(PATCHED_LIB): $(PATCHES) $(LC)/.git
+ifeq ($(LC), $(PATCHED_BUILD))
+	@echo Building libcoap from $(LC)
 	@rm -rf $(PATCHED_DIR)/src $(PATCHED_DIR)/obj
 	@mkdir -p $(PATCHED_DIR)/src
 	@git -C $(LC) archive $(FORK_SHA) | tar -x -C $(PATCHED_DIR)/src
@@ -55,6 +70,18 @@ $(PATCHED_LIB): $(PATCHES) $(LC)/.git
 	  -DENABLE_DOCS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF \
 	  -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug >/dev/null
 	@cmake --build $(PATCHED_DIR)/obj -j 8 --target coap-3 >/dev/null
+else
+	@mkdir -p $(PATCHED_DIR)
+	@echo Building libcoap ext code from $(LC)
+	@cd $(PATCHED_DIR) ;\
+	cmake $(LC) \
+	  -DENABLE_SANITIZER=ON -DWARNING_TO_ERROR=ON \
+	  -DENABLE_OSCORE=ON -DENABLE_OSCORE_GROUP=ON \
+	  -DENABLE_DTLS=ON -DDTLS_BACKEND=openssl $(OPENSSL_CMAKE) \
+	  -DENABLE_DOCS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF \
+	  -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug > /dev/null ;\
+	cmake --build . -j 8 > /dev/null
+endif
 
 $(SERVER_SEC): $(BUILD_DIR)/bin/$(SERVER_SEC)
 	cp $< $@
@@ -90,4 +117,4 @@ clean:
 	find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name libcoap -exec rm -rf {} + 2>/dev/null || true
 
 distclean: clean
-	rm -rf build/secure
+	rm -rf build/secure build_ext_libcoap

@@ -177,7 +177,7 @@ int sec_conf_group_text(const sec_config_t *conf, char *buf, size_t len) {
     char recips[2048] = "";
 
     for (int i = 0; i < conf->num_group_recipients; i++) {
-        char r[512];
+        char r[2048];
         snprintf(r, sizeof(r),
             "complex_recipient,config,'\n"
             "recipient_id,hex,\"%s\"\n"
